@@ -23,9 +23,10 @@ if sys.stdout.encoding != 'utf-8':
 # Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
 # Chỉ import AVAILABLE_TOOLS: app.py tra tool qua registry, không phụ thuộc tên hàm cụ thể
 # ➔ Duy thêm/đổi tool trong tools.py cũng không làm app.py gãy import nữa.
-from tools import AVAILABLE_TOOLS, reset_state
+from tools import AVAILABLE_TOOLS, BOOKED_INTERVIEWS, reset_state
 from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
 from providers import get_llm_provider
+from autonomous_agent import run_autonomous_agent   # 🎁 BONUS: Cấp độ 4
 
 load_dotenv()
 
@@ -218,7 +219,8 @@ def execute_tool(tool_name: str, args: list) -> str:
         return f"LỖI: Tool '{tool_name}' gặp sự cố ngoài dự kiến: {exc}"
 
 
-def run_react_agent(user_query: str, provider, auto_confirm: bool = False) -> dict:
+def run_react_agent(user_query: str, provider, auto_confirm: bool = False,
+                    reset: bool = True) -> dict:
     """
     Vòng lặp ReAct Agent: Thought -> Action -> Observation, có Guardrails.
 
@@ -237,7 +239,10 @@ def run_react_agent(user_query: str, provider, auto_confirm: bool = False) -> di
 
     Trả về dict gồm trace log đầy đủ để Role 5 dán vào docs/trace_eval.md.
     """
-    reset_state()   # mỗi câu hỏi xuất phát từ cùng một trạng thái lịch phỏng vấn
+    # reset=False khi Autonomous Agent (Cấp 4) gọi từng bước con: các bước phải
+    # nhìn thấy lịch đã bị bước trước chiếm, nếu không Memory sẽ vô nghĩa.
+    if reset:
+        reset_state()
 
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
 
@@ -473,3 +478,16 @@ if __name__ == "__main__":
         print(f"#{base['id']:<5}{base['tool_calls']:<22}{react['tool_calls']:<20}"
               f"{str(react['steps']) + '/' + str(MAX_ITERATIONS):<14}"
               f"{'CÓ' if react['stopped_by_guardrail'] else '-'}")
+
+    # --- 🎁 BONUS (+10%): CẤP ĐỘ 4 — AUTONOMOUS AGENT (Planning + Memory) ---
+    # Mục tiêu này cố tình vượt tầm của ReAct Cấp 3: phải xử lý 4 ứng viên và đặt
+    # 2 lịch, trong khi MAX_ITERATIONS chỉ cho 6 bước cho MỘT câu hỏi.
+    print(f"\n\n--- DEMO 3 (BONUS): AUTONOMOUS AGENT — PLANNING + MEMORY ---")
+    reset_state()
+    run_autonomous_agent(
+        goal=("Sàng lọc toàn bộ ứng viên đang ứng tuyển vị trí JD-001 và đặt lịch "
+              "phỏng vấn ngày 2026-07-29 cho MỌI ứng viên đạt từ 70 điểm trở lên."),
+        provider=provider,
+        react_runner=run_react_agent,   # tái sử dụng nguyên vòng lặp ReAct Cấp 3
+        booked_registry=BOOKED_INTERVIEWS,
+    )
