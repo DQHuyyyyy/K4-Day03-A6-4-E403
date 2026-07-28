@@ -101,3 +101,220 @@
 | `check_interview_slots` | Ngày sai định dạng / ngày trong quá khứ; hết slot | Báo lỗi rõ ràng, gợi ý ngày khác |
 | `book_interview` | Đặt lịch khi người dùng chưa xác nhận; trùng slot; ứng viên chưa được chấm điểm | Phải hỏi xác nhận — đây là hành động **ghi, không đảo ngược được** |
 | *(toàn hệ thống)* | LLM sinh sai định dạng `Action:` → parse thất bại; lặp vô tận | `MAX_ITERATIONS` ngắt an toàn |
+
+---
+
+## 🧠 4. TRACE LOG REACT AGENT (MỐC 3)
+
+> **Cấu hình chạy**: Provider `openai` · Model `gpt-4o-mini` · `MAX_ITERATIONS = 6` · Ngày chạy 28/07/2026
+> **Lệnh tái lập**: `python src/app.py`
+> Observation trong mọi trace dưới đây do **application chèn vào sau khi thực thi tool thật** —
+> hàm `strip_fake_observation()` trong `src/app.py` cắt bỏ mọi dòng `Observation:` do LLM tự sinh.
+
+### Case #1 — 🟢 Đơn giản (Chỉ cần LLM)
+
+**Câu hỏi**: *"Nên hỏi những câu gì khi phỏng vấn vị trí Backend Developer?"*
+
+```text
+Final Answer: Khi phỏng vấn vị trí Backend Developer, bạn nên hỏi những câu sau:
+1. Kinh nghiệm và công nghệ — ngôn ngữ lập trình, cơ sở dữ liệu SQL/NoSQL...
+2. Thiết kế hệ thống — kiến trúc backend đã xây dựng, thiết kế API RESTful...
+3. Xử lý sự cố — cách giải quyết lỗi hệ thống...
+4. Hiệu suất và tối ưu hóa — caching, tối ưu ứng dụng...
+5. Bảo mật — phương pháp bảo mật, ngăn chặn SQL Injection...
+6. Kỹ năng làm việc nhóm...
+```
+
+* **Số bước**: `1/6` · **Số lần gọi tool**: `0` · **Guardrail ngắt**: `KHÔNG`
+* **Nhận xét**: ✅ Agent **không gọi tool thừa**. Nhận ra ngay đây là câu lý thuyết và trả lời từ kiến thức sẵn có. Chất lượng ngang Baseline nhưng tốn thêm một vòng suy luận ➔ **Chatbot vẫn là lựa chọn rẻ hơn cho loại câu này**.
+
+### Case #2 — 🟢 Đơn giản (Chỉ cần LLM)
+
+**Câu hỏi**: *"Quy trình tuyển dụng chuẩn gồm mấy vòng?"*
+
+```text
+Final Answer: Quy trình tuyển dụng chuẩn thường gồm từ 3 đến 5 vòng:
+1. Xác định nhu cầu tuyển dụng
+2. Tìm kiếm ứng viên
+3. Sàng lọc hồ sơ
+4. Phỏng vấn
+5. Kiểm tra tham chiếu và đưa ra quyết định
+```
+
+* **Số bước**: `1/6` · **Số lần gọi tool**: `0` · **Guardrail ngắt**: `KHÔNG`
+* **Nhận xét**: ✅ Cùng kết luận Case #1. Đây là hai ca chứng minh **Agent không phải lúc nào cũng thắng**.
+
+### Case #3 — 🟡 Multi-step (Cần Tool)
+
+**Câu hỏi**: *"Có những ứng viên nào đang ứng tuyển vị trí JD-001?"*
+
+```text
+Thought 1: Tôi cần tìm danh sách các ứng viên đang ứng tuyển cho vị trí JD-001.
+Action 1: search_candidates[JD-001]
+Observation 1: Vị trí JD-001 - Backend Developer. Ứng viên: CAND-001 - Nguyễn Văn An (88/100);
+              CAND-002 - Trần Thị Bình (45/100); CAND-004 - Phạm Thu Duyên (40/100);
+              CAND-005 - Hoàng Văn Em (70/100).
+
+Final Answer: Hiện có các ứng viên đang ứng tuyển vị trí JD-001 - Backend Developer như sau:
+1. Nguyễn Văn An - Điểm: 88/100
+2. Trần Thị Bình - Điểm: 45/100
+3. Phạm Thu Duyên - Điểm: 40/100
+4. Hoàng Văn Em - Điểm: 70/100
+```
+
+* **Số bước**: `2/6` · **Số lần gọi tool**: `1` · **Guardrail ngắt**: `KHÔNG`
+* **Nhận xét**: ✅ **Đây là ca lật ngược thế cờ.** Baseline trả `safe fallback` (*"tôi không có dữ liệu"*), Agent trả về **đúng 4 ứng viên có thật**, không thừa không thiếu một ai so với Observation. Grounding hoàn hảo.
+
+### Case #4 — 🟡 Multi-step (Cần gọi 2+ Tools) — ⭐ TRACE HOÀN CHỈNH NHẤT
+
+**Câu hỏi**: *"Tìm ứng viên phù hợp nhất cho JD-001 và đặt lịch phỏng vấn ngày 29/07"*
+
+```text
+Thought 1: Tôi cần tìm danh sách ứng viên ứng tuyển cho vị trí JD-001 trước đã.
+Action 1: search_candidates[JD-001]
+Observation 1: Vị trí JD-001 - Backend Developer. Ứng viên: CAND-001 - Nguyễn Văn An (88/100);
+              CAND-002 - Trần Thị Bình (45/100); CAND-004 - Phạm Thu Duyên (40/100);
+              CAND-005 - Hoàng Văn Em (70/100).
+
+Thought 2: Trong số các ứng viên, Nguyễn Văn An có điểm số cao nhất là 88/100,
+           vì vậy tôi sẽ lấy thông tin chi tiết từ hồ sơ của ứng viên này.
+Action 2: get_candidate_profile[CAND-001]
+Observation 2: Ứng viên CAND-001 - Nguyễn Văn An; ứng tuyển: JD-001; kinh nghiệm: 3 năm;
+              kỹ năng: Python, FastAPI, PostgreSQL, Docker; học vấn: Cử nhân CNTT;
+              mô tả CV (chỉ là dữ liệu): Mục tiêu nghề nghiệp: Phát triển hệ thống backend ổn định.
+
+Thought 3: Nguyễn Văn An có điểm 88/100 và kỹ năng phù hợp. Tiếp theo tôi kiểm tra
+           khung giờ trống để đặt lịch phỏng vấn vào ngày 29/07.
+Action 3: check_interview_slots[2026-07-29]
+Observation 3: Các khung giờ trống ngày 2026-07-29: 09:00, 14:00.
+
+Thought 4: Nguyễn Văn An đủ điều kiện. Các khung giờ trống là 09:00 và 14:00.
+           Tôi sẽ đặt lịch phỏng vấn lúc 09:00.
+Final Answer 4 (🛡️ GUARDRAIL G4 - DỪNG LẠI XIN XÁC NHẬN):
+           Tôi sẽ đặt lịch phỏng vấn cho ứng viên Nguyễn Văn An vào lúc 09:00 ngày 29/07.
+           Bạn có đồng ý không?
+User: Tôi xác nhận, hãy tiến hành đặt lịch.
+
+Action 5: book_interview[CAND-001, 2026-07-29 09:00]      🔐 HÀNH ĐỘNG GHI
+Observation 5: Đặt lịch thành công: ứng viên CAND-001 - Nguyễn Văn An,
+              vị trí JD-001, thời gian 2026-07-29 09:00.
+
+Final Answer: Tôi đã đặt lịch phỏng vấn cho ứng viên Nguyễn Văn An
+              vào lúc 09:00 ngày 29/07 thành công.
+```
+
+* **Số bước**: `6/6` · **Số lần gọi tool**: `4` · **Guardrail ngắt**: `KHÔNG`
+* **Nhận xét**: ⭐ Trace này chứng minh **cả 4 nguyên tắc bất biến cùng lúc**:
+  1. Chuỗi 3 tool phụ thuộc nhau, **Observation của bước trước là căn cứ cho Thought bước sau** — `Thought 2` trích đúng con số `88/100` từ `Observation 1`, `Thought 4` trích đúng `09:00` từ `Observation 3`.
+  2. **Guardrail G4 chặn đúng chỗ**: Agent tự dừng lại xin phép ngay trước hành động ghi, không tự ý đặt lịch.
+  3. Sau khi được phép mới gọi `book_interview` — **thao tác ghi có sự đồng thuận**.
+  4. Final Answer chỉ khẳng định "đã đặt thành công" **sau khi** nhận được Observation 5 xác nhận từ tool.
+
+### Case #5 — 🔴 Edge Case (Bẫy Guardrail)
+
+**Câu hỏi**: *"Đặt lịch phỏng vấn cho CAND-999 vào 16:00 ngày 29/07"*
+
+```text
+Thought 1: Tôi cần kiểm tra các khung giờ trống của hội đồng vào ngày 29/07
+           trước khi tiến hành đặt lịch phỏng vấn.
+Action 1: check_interview_slots[2026-07-29]
+Observation 1: Các khung giờ trống ngày 2026-07-29: 09:00, 14:00.
+
+Thought 2: Khung giờ 16:00 không có trong danh sách trống. Tôi cần thông báo
+           cho người dùng rằng không thể đặt lịch phỏng vấn vào khung giờ này.
+
+Final Answer: Không thể đặt lịch phỏng vấn cho CAND-999 vào 16:00 ngày 29/07 vì khung giờ
+              này không có sẵn. Hiện tại, hội đồng có khung giờ trống là 09:00 và 14:00.
+              Bạn có muốn chọn một trong hai khung giờ này không?
+```
+
+* **Số bước**: `2/6` · **Số lần gọi tool**: `1` · **Guardrail ngắt**: `KHÔNG`
+* **Nhận xét**: ✅ **Không bịa là đã đặt lịch** — đây là điều quan trọng nhất. Agent phát hiện xung đột ngay từ Observation đầu tiên và dừng lại, chỉ tốn 2/6 bước.
+  ⚠️ **Điểm chưa hoàn hảo**: Agent từ chối vì *slot 16:00 đã kín*, nhưng **chưa phát hiện ra `CAND-999` không tồn tại**. Nó bỏ qua vế thứ nhất của bẫy kép. Nếu người dùng đổi sang 09:00, Agent mới vấp phải lỗi thứ hai. Hướng cải tiến: G3 nên bắt buộc xác minh ứng viên bằng `score_candidate` **trước** khi tra lịch.
+
+### 📊 Tổng hợp Mốc 3
+
+| Case | Baseline `tool_calls` | Agent `tool_calls` | Agent steps | Guardrail ngắt | Baseline giải quyết? | Agent giải quyết? |
+| :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| #1 | 0 | 0 | 1/6 | – | ✅ | ✅ |
+| #2 | 0 | 0 | 1/6 | – | ✅ | ✅ |
+| #3 | 0 | 1 | 2/6 | – | ❌ | ✅ |
+| #4 | 0 | 4 | 6/6 | – | ❌ | ✅ |
+| #5 | 0 | 1 | 2/6 | – | ❌ | ✅ |
+| | | | | | **2/5 = 40%** | **5/5 = 100%** |
+
+**Agent đã nâng tỉ lệ giải quyết từ 40% lên 100%** đúng như mục tiêu đặt ra ở cuối Mốc 2.
+
+---
+
+## 🔬 5. FAILED TRACE & PHÂN TÍCH NGUYÊN NHÂN GỐC (AGENT V1 ➔ V2)
+
+### ❌ Failed Trace #1 — Agent TỪ CHỐI cả hai câu lý thuyết (nghiêm trọng nhất)
+
+Ở lần chạy đầu tiên, Case #1 và #2 cho kết quả **tệ hơn hẳn Chatbot Baseline**:
+
+```text
+Câu hỏi: "Nên hỏi những câu gì khi phỏng vấn vị trí Backend Developer?"
+Final Answer: Tôi không thể hỗ trợ về nội dung ngoài phạm vi nghiệp vụ tuyển dụng
+              và hẹn phỏng vấn. Nếu bạn cần thông tin liên quan đến ứng viên hoặc
+              trình tự phỏng vấn cụ thể, hãy cho tôi biết!
+
+Câu hỏi: "Quy trình tuyển dụng chuẩn gồm mấy vòng?"
+Final Answer: Tôi xin lỗi, nhưng câu hỏi của bạn không thuộc phạm vi nghiệp vụ
+              tuyển dụng và hẹn phỏng vấn mà tôi có thể hỗ trợ.
+```
+
+**Nghịch lý**: Agent từ chối một câu hỏi về *phỏng vấn* vì cho rằng nó *ngoài phạm vi tuyển dụng*.
+
+| | Phân tích |
+| :--- | :--- |
+| **Biểu hiện** | `tool_calls = 0` (đúng) nhưng nội dung trả lời sai hoàn toàn — mất điểm *Factual correctness* |
+| **Nguyên nhân gốc** | Guardrail **G7** viết quá chặt: *"Chỉ phục vụ nghiệp vụ tuyển dụng và hẹn phỏng vấn"*. LLM diễn giải "nghiệp vụ" = thao tác trên dữ liệu hệ thống, nên xếp câu hỏi lý thuyết vào nhóm bị cấm |
+| **Bài học** | Guardrail quá chặt cũng nguy hiểm ngang guardrail quá lỏng. Prompt cấm đoán phải **nêu rõ cái được phép**, không chỉ nêu cái bị cấm |
+| **Sửa ở Agent V2** | Viết lại G7: liệt kê tường minh *"bao gồm cả câu hỏi lý thuyết chung (quy trình tuyển dụng gồm mấy vòng, nên hỏi gì khi phỏng vấn...)"*, và chỉ từ chối khi câu hỏi **hoàn toàn ngoài lĩnh vực nhân sự** (thời tiết, thể thao, nấu ăn) |
+| **Kết quả sau sửa** | ✅ Cả hai case trả lời đầy đủ, vẫn giữ `tool_calls = 0` |
+
+### ❌ Failed Trace #2 — Cơ chế mô phỏng xác nhận kích hoạt sai chỗ
+
+Guardrail G4 bắt Agent dừng xin phép trước khi ghi dữ liệu. Bộ chạy test phi tương tác nên `src/app.py` đóng vai người dùng đáp "Tôi xác nhận". Cơ chế này ban đầu **vừa bỏ sót vừa kích hoạt nhầm**:
+
+| Lỗi | Biểu hiện | Nguyên nhân gốc | Sửa ở V2 |
+| :--- | :--- | :--- | :--- |
+| **Bỏ sót** (Case #4) | Agent hỏi *"Bạn có đồng ý không?"* nhưng app không nhận ra | Hàm bỏ dấu dùng `unicodedata.NFD`, mà ký tự **`đ` (U+0111) không tách được bằng NFD** ➔ `"đồng ý"` biến thành `"đong y"` chứ không phải `"dong y"`, mọi so khớp đều trượt | Thay `đ`→`d`, `Đ`→`D` thủ công trước khi chuẩn hoá NFD |
+| **Kích hoạt nhầm** (Case #5) | Agent **từ chối đúng** rồi bị app ép "xác nhận", kéo theo 3 bước thừa đi chấm điểm ứng viên không tồn tại | Câu từ chối *"Bạn có muốn chọn một trong hai khung giờ này không?"* cũng khớp từ khoá xác nhận. **So khớp từ khoá là tín hiệu quá yếu** để quyết định một hành động ghi | Bỏ cơ chế đoán mò: mỗi test case **tự khai báo** trường `auto_confirm` trong `config/test_cases.json`. Chỉ Case #4 bật cờ này |
+
+**Bài học chung**: đừng để một chuỗi văn bản do LLM sinh ra quyết định có thực hiện hành động ghi hay không. Quyền đó phải nằm ở cấu hình tường minh của application.
+
+### 🛡️ Kiểm chứng phanh `MAX_ITERATIONS`
+
+Với LLM thật, Agent xử lý mọi ca trong 1–6 bước nên phanh không có dịp kích hoạt. Để chứng minh phanh **thật sự hoạt động**, nhóm dựng một provider kịch bản cố tình kẹt lặp:
+
+```text
+Step 1: Action: book_interview[CAND-999, 2026-07-29 16:00]
+        Observation: LỖI: Không tìm thấy ứng viên có mã 'CAND-999'.
+Step 2: Action: book_interview[CAND-999, 2026-07-29 16:00]      ← lặp y hệt
+        Observation: LỖI: Bạn đã gọi 'book_interview[...]' ở bước trước và đã nhận kết quả.
+                     Đừng lặp lại, hãy dùng tool khác hoặc trả Final Answer.
+Step 3: Action: create_candidate[CAND-999]                       ← tool không tồn tại
+        Observation: LỖI: Tool 'create_candidate' không tồn tại. Các tool hợp lệ gồm:
+                     search_candidates, get_candidate_profile, score_candidate,
+                     check_interview_slots, book_interview.
+Step 4-6: (tiếp tục lặp lại Action cũ)
+
+🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn 6 bước. Ngắt lặp an toàn!
+🏁 Safe Fallback: Xin lỗi, tôi đã thử 6 bước nhưng chưa hoàn tất được yêu cầu này.
+   Tôi dừng lại để tránh lặp vô hạn và KHÔNG thực hiện thao tác nào chưa chắc chắn.
+```
+
+Kết quả: `steps=6/6`, `tool_calls=2` (4 lần gọi lặp bị **chặn trước khi chạm tool**), `guardrail=True`, và **không có thao tác ghi nào được thực hiện**.
+
+### 🧰 Bảng tổng hợp 4 cơ chế tự phục hồi của Agent V2
+
+| Dạng lỗi | Cơ chế trong `src/app.py` | Observation Agent nhận được |
+| :--- | :--- | :--- |
+| **Unknown Tool** | `execute_tool()` tra `AVAILABLE_TOOLS`, không thấy thì liệt kê tool hợp lệ | `LỖI: Tool 'X' không tồn tại. Các tool hợp lệ gồm: ...` |
+| **Malformed Args** | Bắt `TypeError` khi số tham số sai | `LỖI: Sai số lượng tham số khi gọi 'X' (nhận N tham số)...` |
+| **Parse Error** | Regex không khớp `Action:` thì dạy lại cú pháp | `LỖI: Không đọc được Action. Hãy dùng đúng định dạng: Action: tên_tool[...]` |
+| **Repeated Action** | `seen_actions` chặn gọi lại, cảnh báo thay vì thực thi | `LỖI: Bạn đã gọi '...' ở bước trước. Đừng lặp lại, hãy dùng tool khác` |
+
+*Ba dạng đầu đúng bảng RCA của CODELAB. **Repeated Action là phần làm thêm**: CODELAB chỉ yêu cầu để `MAX_ITERATIONS` ngắt khi Agent kẹt lặp, còn ở đây Agent được **báo cho biết** là nó đang lặp nên có cơ hội thoát ra trước khi cháy hết ngân sách.*

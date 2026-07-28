@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from dotenv import load_dotenv
 
 # Đảm bảo import các module cùng thư mục src/ hoạt động mượt mà
@@ -125,6 +126,28 @@ THOUGHT_PATTERN = re.compile(
     r"Thought\s*:\s*(.+?)(?=\n\s*(?:Action|Final\s+Answer)\s*:|$)", re.DOTALL
 )
 
+# Guardrail G4 của Role 3 bắt Agent DỪNG bằng Final Answer để xin phép trước khi
+# gọi book_interview. Nhận diện lời xin phép đó để mô phỏng lượt trả lời của người dùng.
+# Khớp trên bản đã bỏ dấu để không phụ thuộc việc LLM có gõ dấu tiếng Việt hay không.
+CONFIRM_REQUEST_PATTERN = re.compile(
+    r"xac nhan|dong y|cho phep|ban co muon|tien hanh dat|co dat lich", re.IGNORECASE
+)
+USER_CONFIRMATION = "User: Tôi xác nhận, hãy tiến hành đặt lịch."
+
+
+def strip_accents(text: str) -> str:
+    """
+    Bỏ dấu tiếng Việt để so khớp từ khoá không phụ thuộc dấu.
+
+    Lưu ý: 'đ'/'Đ' (U+0111/U+0110) KHÔNG tách được bằng NFD nên phải thay tay,
+    nếu không 'đồng ý' sẽ ra 'đong y' và mọi so khớp với 'dong y' đều trượt.
+    """
+    text = text.replace("đ", "d").replace("Đ", "D")
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", text)
+        if unicodedata.category(ch) != "Mn"
+    )
+
 
 def strip_fake_observation(raw: str) -> str:
     """
@@ -195,9 +218,22 @@ def execute_tool(tool_name: str, args: list) -> str:
         return f"LỖI: Tool '{tool_name}' gặp sự cố ngoài dự kiến: {exc}"
 
 
-def run_react_agent(user_query: str, provider) -> dict:
+def run_react_agent(user_query: str, provider, auto_confirm: bool = False) -> dict:
     """
     Vòng lặp ReAct Agent: Thought -> Action -> Observation, có Guardrails.
+
+    auto_confirm: Guardrail G4 bắt Agent dừng lại xin phép người dùng trước khi gọi
+        ``book_interview``. Bộ chạy test là phi tương tác nên không có ai trả lời,
+        Agent sẽ đứng mãi ở lời xin phép và đường ghi dữ liệu không bao giờ được
+        chứng minh. Khi bật cờ này, application tự đóng vai người dùng đáp "Tôi xác
+        nhận" đúng MỘT lần — trace log nhờ đó thể hiện được cả hai: G4 chặn đúng lúc,
+        và thao tác ghi hoàn tất sau khi đã được cho phép.
+
+        Cờ này do TỪNG test case tự khai báo (trường ``auto_confirm`` trong
+        config/test_cases.json), KHÔNG bật mặc định. Lý do: ở câu bẫy #5 Agent từ chối
+        đúng và câu từ chối đó cũng chứa chữ "bạn có muốn...", nếu tự động đồng ý thì
+        application sẽ ép Agent thử đặt lịch tiếp cho một ứng viên không tồn tại —
+        biến một lần từ chối chuẩn thành 3 bước thừa.
 
     Trả về dict gồm trace log đầy đủ để Role 5 dán vào docs/trace_eval.md.
     """
@@ -211,6 +247,7 @@ def run_react_agent(user_query: str, provider) -> dict:
     tool_calls = 0
     final_answer = None
     stopped_by_guardrail = False
+    confirmation_given = False
 
     for step in range(1, MAX_ITERATIONS + 1):
         print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
@@ -228,6 +265,41 @@ def run_react_agent(user_query: str, provider) -> dict:
 
         # --- Nhánh 1: Agent chốt câu trả lời cuối cùng ---
         if parsed["final_answer"] is not None:
+            # G4 — Agent đã xem lịch trống, chưa đặt, và đang xin phép người dùng.
+            # Điều kiện chặt để không kích hoạt nhầm ở các case chỉ hỏi lý thuyết.
+            checked_slots = any(
+                e["action"] and e["action"].startswith("check_interview_slots")
+                for e in trace
+            )
+            already_booked = any(
+                e["action"] and e["action"].startswith("book_interview")
+                and e["observation"] and not e["observation"].startswith("LỖI:")
+                for e in trace
+            )
+            asking_permission = bool(
+                CONFIRM_REQUEST_PATTERN.search(strip_accents(parsed["final_answer"]))
+            )
+
+            if (auto_confirm and not confirmation_given and checked_slots
+                    and not already_booked and asking_permission):
+                confirmation_given = True
+                print(f"🏁 Final Answer (xin xác nhận): {parsed['final_answer']}")
+                print(f"🔐 [MÔ PHỎNG NGƯỜI DÙNG] {USER_CONFIRMATION}")
+
+                history.append(f"Thought: {parsed['thought']}")
+                history.append(f"Final Answer: {parsed['final_answer']}")
+                history.append(USER_CONFIRMATION)
+
+                trace.append({
+                    "step": step,
+                    "thought": parsed["thought"],
+                    "action": None,
+                    "observation": None,
+                    "final_answer": None,
+                    "pending_final": parsed["final_answer"],   # lời xin phép theo G4
+                })
+                continue   # sang lượt sau, giờ Agent đã được phép gọi book_interview
+
             final_answer = parsed["final_answer"]
             print(f"🏁 Final Answer: {final_answer}")
             trace.append({
@@ -284,6 +356,7 @@ def run_react_agent(user_query: str, provider) -> dict:
             "action": action_label,
             "observation": observation,
             "final_answer": None,
+            "pending_final": None,
         })
 
     # --- Guardrail: hết ngân sách vòng lặp mà chưa có Final Answer ---
@@ -316,7 +389,10 @@ def run_react_suite(tests, provider):
         print(f"🎯 Kỳ vọng : {tc['expected_behavior'][:120]}...")
         print("-" * 60)
 
-        outcome = run_react_agent(tc["question"], provider)
+        # Chỉ case nào tự khai báo mới được mô phỏng người dùng bấm xác nhận
+        outcome = run_react_agent(
+            tc["question"], provider, auto_confirm=tc.get("auto_confirm", False)
+        )
         outcome.update({
             "id": tc["id"],
             "category": tc["category"],
@@ -344,6 +420,10 @@ def export_react_markdown(results):
                 print(f"Action {entry['step']}: {entry['action']}")
             if entry["observation"]:
                 print(f"Observation {entry['step']}: {entry['observation']}")
+            if entry.get("pending_final"):
+                # Guardrail G4 chặn lại xin phép, rồi người dùng đồng ý
+                print(f"Final Answer {entry['step']} (G4 - xin xác nhận): {entry['pending_final']}")
+                print(USER_CONFIRMATION)
             print()
         print(f"Final Answer: {r['final_answer']}")
         print("```\n")
