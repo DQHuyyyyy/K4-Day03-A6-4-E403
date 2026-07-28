@@ -1,0 +1,64 @@
+flowchart TD
+    Q["📥 Câu hỏi người dùng"] --> G8{"⚖️ G8 — Yêu cầu có<br/>phân biệt đối xử không?<br/>(giới tính, tuổi, quê quán)"}
+
+    G8 -- "CÓ" --> REJ1["🚫 TỪ CHỐI NGAY<br/>Nêu nguyên tắc chống phân biệt<br/>Đề nghị lọc theo năng lực<br/><b>tool_calls = 0</b>"]
+
+    G8 -- "KHÔNG" --> G7{"🎯 G7 — Thuộc lĩnh vực<br/>tuyển dụng - nhân sự?"}
+    G7 -- "KHÔNG<br/>(thời tiết, thể thao...)" --> REJ2["🙅 Từ chối lịch sự<br/><b>tool_calls = 0</b>"]
+
+    G7 -- "CÓ" --> NEED{"🔍 Có cần dữ liệu trong ATS<br/>hoặc phải THỰC HIỆN thao tác?"}
+
+    %% ========== NHÁNH 1: CHATBOT PATH ==========
+    NEED -- "KHÔNG<br/>Câu lý thuyết chung" --> C1["💬 CHATBOT PATH"]
+    C1 --> C2["1 LLM call duy nhất<br/>CHATBOT_BASELINE_PROMPT"]
+    C2 --> C3["🏁 Final Answer<br/><b>tool_calls = 0 · 1 bước</b>"]
+    C3 --> DONE["✅ Trả lời người dùng"]
+
+    %% ========== NHÁNH 2: REACT AGENT PATH ==========
+    NEED -- "CÓ<br/>Cần grounding / hành động" --> R1["🧠 REACT AGENT PATH"]
+    R1 --> R2["REACT_SYSTEM_PROMPT<br/>+ lịch sử Observation"]
+    R2 --> R3["🤔 Thought: suy luận bước kế"]
+    R3 --> R4{"Sinh ra Action<br/>hay Final Answer?"}
+
+    R4 -- "Final Answer" --> R14{"🛡️ G4 — Sắp thực hiện<br/>hành động GHI?"}
+    R14 -- "CÓ" --> R15["🔐 DỪNG LẠI XIN XÁC NHẬN<br/>Tóm tắt ứng viên - điểm - giờ"]
+    R15 --> R16{"Người dùng đồng ý?"}
+    R16 -- "Không" --> DONE
+    R16 -- "Có" --> R2
+    R14 -- "KHÔNG" --> DONE
+
+    R4 -- "Action" --> R5{"🔎 Parser đọc được<br/>tên tool + tham số?"}
+    R5 -- "Không" --> E1["❌ Recovery: Parse Error<br/>Dạy lại cú pháp đúng"]
+    R5 -- "Có" --> R6{"Tool có trong<br/>AVAILABLE_TOOLS?"}
+    R6 -- "Không" --> E2["❌ Recovery: Unknown Tool<br/>Liệt kê 5 tool hợp lệ"]
+    R6 -- "Có" --> R7{"🔁 Action này đã gọi<br/>ở bước trước chưa?"}
+    R7 -- "Rồi" --> E3["❌ Recovery: Repeated Action<br/>Chặn, cảnh báo đang kẹt lặp"]
+
+    R7 -- "Chưa" --> R8{"Là book_interview<br/>(ghi dữ liệu)?"}
+    R8 -- "Có" --> R9["🔐 Đánh dấu HÀNH ĐỘNG GHI<br/>Tool tự kiểm tra ngưỡng ≥ 70"]
+    R8 -- "Không" --> R10["📖 Tool READ-ONLY"]
+    R9 --> R11["⚙️ Thực thi tool THẬT"]
+    R10 --> R11
+
+    R11 --> R12["👁️ Observation<br/><i>do APPLICATION chèn</i><br/>LLM không được tự bịa"]
+    E1 --> R12
+    E2 --> R12
+    E3 --> R12
+
+    R12 --> R13{"🛡️ G6 — Đã dùng hết<br/>MAX_ITERATIONS = 6?"}
+    R13 -- "Chưa" --> R2
+    R13 -- "Rồi" --> SAFE["🛡️ GUARDRAIL NGẮT<br/>Safe Fallback lịch sự<br/><b>Không thực hiện thao tác nào</b>"]
+    SAFE --> DONE
+
+    %% ========== STYLE ==========
+    classDef chatbot fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#0b2e13
+    classDef agent fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px,color:#04204d
+    classDef guard fill:#fff3cd,stroke:#ffc107,stroke-width:2px,color:#4d3800
+    classDef danger fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#4d0b12
+    classDef write fill:#e2d9f3,stroke:#6f42c1,stroke-width:3px,color:#2a1a4d
+
+    class C1,C2,C3 chatbot
+    class R1,R2,R3,R10,R11,R12 agent
+    class G7,G8,R13,R14,SAFE,R15,R16 guard
+    class REJ1,REJ2,E1,E2,E3 danger
+    class R8,R9 write

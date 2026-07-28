@@ -21,6 +21,7 @@
     "id": 4,
     "category": "🟡 Multi-step (Cần gọi 2+ Tools)",
     "question": "Tìm ứng viên phù hợp nhất cho JD-001 và đặt lịch phỏng vấn ngày 29/07",
+    "auto_confirm": true,
     "expected_behavior": "Chuỗi tool phụ thuộc nhau: search_candidates['JD-001'] (đã trả kèm điểm khớp của từng ứng viên) ➔ chỉ khi điểm >= 70 mới gọi check_interview_slots['2026-07-29'] ➔ book_interview['CAND-001', '2026-07-29 09:00']. Observation của bước trước phải xuất hiện trong prompt bước sau. Nếu ứng viên dưới 70 điểm, Agent phải dừng và báo không đủ điều kiện. Vì book_interview là hành động GHI không đảo ngược, Agent phải hỏi người dùng xác nhận trước khi chốt."
   },
   {
