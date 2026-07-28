@@ -138,7 +138,16 @@ async function run() {
   $('output').innerHTML = '';
   $('statBar').hidden = true;
 
+  // Đồng hồ đếm giây: Cấp 4 có thể chạy vài phút, không có phản hồi thì
+  // người xem tưởng giao diện bị treo.
   const t0 = performance.now();
+  const hint = $('overlayHint');
+  const timer = setInterval(() => {
+    const s = Math.round((performance.now() - t0) / 1000);
+    hint.textContent = `Đã chạy ${s}s · mỗi bước là một lần gọi LLM thật`
+      + (MODE === 'autonomous' ? ' · Cấp 4 thường mất 1–3 phút' : '');
+  }, 500);
+
   let data;
   try {
     data = await fetch('/api/ask', {
@@ -147,8 +156,10 @@ async function run() {
       body: JSON.stringify({ mode: MODE, question }),
     }).then((r) => r.json());
   } catch (err) {
-    data = { error: String(err) };
+    data = { error: `Không gọi được server: ${err}. Kiểm tra cửa sổ terminal đang chạy python src/web_demo.py.` };
   }
+  clearInterval(timer);
+  hint.textContent = 'Mỗi bước là một lần gọi LLM thật, vui lòng đợi';
   const seconds = ((performance.now() - t0) / 1000).toFixed(1);
 
   $('overlay').hidden = true;

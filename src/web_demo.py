@@ -17,11 +17,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-if sys.stdout.encoding != 'utf-8':
-    try:
-        sys.stdout.reconfigure(encoding='utf-8')
-    except Exception:
-        pass
+# line_buffering=True: nếu không, stdout bị đệm và cửa sổ terminal im lìm suốt lúc
+# Agent chạy — người demo tưởng chương trình bị treo.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', line_buffering=True)
+except Exception:
+    pass
 
 import app as core                      # noqa: E402  vòng lặp ReAct + Baseline
 from tools import (                     # noqa: E402

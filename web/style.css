@@ -30,6 +30,11 @@
 
 * { box-sizing: border-box; }
 
+/* ⚠️ BẮT BUỘC: .overlay và .statbar đều đặt display:grid, mà style của tác giả luôn
+   thắng quy tắc [hidden]{display:none} của trình duyệt. Thiếu dòng này thì overlay
+   quay vòng vĩnh viễn ngay khi vừa tải trang. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
