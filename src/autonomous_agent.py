@@ -173,6 +173,7 @@ def run_autonomous_agent(goal: str, provider, react_runner, booked_registry,
             "step": step,
             "observations": observations,
             "summary": outcome["final_answer"],
+            "trace": outcome["trace"],   # giữ nguyên trace để giao diện web vẽ lại
         })
         memory["booked"] = [b["candidate_id"] for b in booked_registry]
 

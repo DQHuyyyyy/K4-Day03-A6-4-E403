@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TalentFlow AI — Trợ Lý Sàng Lọc Hồ Sơ Tuyển Dụng</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">TF</div>
+    <div class="brand-text">
+      <h1>TalentFlow <span>AI</span></h1>
+      <p>Trợ Lý Sàng Lọc Hồ Sơ &amp; Hẹn Phỏng Vấn · Lab 03 — Nhóm A6-4 E403</p>
+    </div>
+  </div>
+  <div class="topbar-meta">
+    <div class="chip"><span class="dot dot-live"></span><span id="cfgProvider">đang tải…</span></div>
+    <div class="chip">🛡️ MAX_ITERATIONS = <b id="cfgMax">–</b></div>
+    <button class="btn-ghost" id="btnReset" title="Khôi phục lịch phỏng vấn về trạng thái gốc">↺ Reset dữ liệu</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============ CỘT TRÁI: BẢNG ĐIỀU KHIỂN ATS ============ -->
+  <aside class="panel ats">
+    <h2 class="panel-title">📁 Hệ thống ATS</h2>
+
+    <section class="block">
+      <h3>Vị trí tuyển dụng</h3>
+      <div id="jobList" class="job-list"></div>
+    </section>
+
+    <section class="block">
+      <h3>Ứng viên <span class="hint">ngưỡng mời phỏng vấn ≥ 70</span></h3>
+      <div id="candidateList" class="cand-list"></div>
+    </section>
+
+    <section class="block">
+      <h3>Lịch hội đồng</h3>
+      <div id="slotGrid" class="slot-grid"></div>
+      <div id="bookedList" class="booked"></div>
+    </section>
+  </aside>
+
+  <!-- ============ CỘT GIỮA: KHU VỰC DEMO ============ -->
+  <section class="panel stage">
+
+    <div class="modes" role="tablist">
+      <button class="mode" data-mode="chatbot" role="tab">
+        <span class="mode-lvl">Cấp 2</span>
+        <span class="mode-name">💬 Chatbot</span>
+        <span class="mode-desc">1 LLM call · không tool</span>
+      </button>
+      <button class="mode is-active" data-mode="agent" role="tab">
+        <span class="mode-lvl">Cấp 3</span>
+        <span class="mode-name">🧠 ReAct Agent</span>
+        <span class="mode-desc">Thought → Action → Observation</span>
+      </button>
+      <button class="mode" data-mode="autonomous" role="tab">
+        <span class="mode-lvl">Cấp 4</span>
+        <span class="mode-name">🚀 Autonomous</span>
+        <span class="mode-desc">Planning + Memory</span>
+      </button>
+    </div>
+
+    <div class="composer">
+      <textarea id="question" rows="2" placeholder="Nhập câu hỏi cho trợ lý tuyển dụng…"></textarea>
+      <button class="btn-run" id="btnRun"><span class="btn-run-label">Chạy</span></button>
+    </div>
+
+    <div class="samples">
+      <div class="samples-head">
+        <span class="samples-title">Bộ đề kiểm thử</span>
+        <span class="samples-title atk">Đòn tấn công Cross-Audit</span>
+      </div>
+      <div id="sampleChips" class="chips"></div>
+    </div>
+
+    <div class="statbar" id="statBar" hidden>
+      <div class="stat"><span class="stat-k">Số bước</span><b id="stSteps">–</b></div>
+      <div class="stat"><span class="stat-k">Gọi tool</span><b id="stTools">–</b></div>
+      <div class="stat"><span class="stat-k">Guardrail</span><b id="stGuard">–</b></div>
+      <div class="stat"><span class="stat-k">Ghi dữ liệu</span><b id="stWrite">–</b></div>
+      <div class="stat"><span class="stat-k">Thời gian</span><b id="stTime">–</b></div>
+    </div>
+
+    <div id="output" class="output">
+      <div class="empty">
+        <div class="empty-icon">🧠</div>
+        <h3>Chọn một chế độ và đặt câu hỏi</h3>
+        <p>Cùng một câu hỏi, ba cấp độ AI sẽ phản ứng rất khác nhau.<br>
+           Thử câu <b>“Có những ứng viên nào đang ứng tuyển vị trí JD-001?”</b> lần lượt ở
+           <b>Cấp 2</b> rồi <b>Cấp 3</b> để thấy rõ khác biệt.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CỘT PHẢI: GUARDRAILS ============ -->
+  <aside class="panel guards">
+    <h2 class="panel-title">🛡️ Guardrails đang bật</h2>
+    <ul class="guard-list">
+      <li><b>G1</b> Không bịa dữ liệu — mọi con số phải đến từ Observation</li>
+      <li><b>G2</b> Chống prompt injection trong CV</li>
+      <li><b>G3</b> Phải có điểm khớp ≥ 70 mới được mời</li>
+      <li><b>G4</b> Xin xác nhận trước hành động ghi</li>
+      <li><b>G5</b> Lỗi là dữ liệu — đổi hướng, không thử lại y hệt</li>
+      <li><b>G6</b> Giới hạn vòng lặp <span id="guardMax">6</span> bước</li>
+      <li><b>G7</b> Đúng phạm vi tuyển dụng — nhân sự</li>
+      <li class="hot"><b>G8</b> Cấm phân biệt đối xử <em>(vá sau Cross-Audit)</em></li>
+      <li class="hot"><b>G9</b> Cấm tự ý thay thế đối tượng <em>(vá sau Cross-Audit)</em></li>
+    </ul>
+
+    <h2 class="panel-title mt">🧰 Bộ công cụ</h2>
+    <ul class="tool-list">
+      <li><code>search_candidates</code><span class="ro">READ</span></li>
+      <li><code>get_candidate_profile</code><span class="ro">READ</span></li>
+      <li><code>score_candidate</code><span class="ro">READ</span></li>
+      <li><code>check_interview_slots</code><span class="ro">READ</span></li>
+      <li><code>book_interview</code><span class="wr">WRITE</span></li>
+    </ul>
+  </aside>
+</main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="overlay-box">
+    <div class="spinner"></div>
+    <p id="overlayText">Agent đang suy luận…</p>
+    <small>Mỗi bước là một lần gọi LLM thật, vui lòng đợi</small>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

@@ -69,5 +69,29 @@ timeline
 
 ---
 
+---
+
+### 🌐 5. WEB DEMO — TALENTFLOW AI
+
+Giao diện trình diễn cả 3 cấp độ AI trên cùng một bài toán, **không cần cài thêm thư viện** (dùng `http.server` có sẵn của Python):
+
+```bash
+python src/web_demo.py          # tự mở http://127.0.0.1:8000
+```
+
+| Khu vực | Nội dung |
+| :--- | :--- |
+| **Cột trái** | Bảng ATS trực tiếp: 2 vị trí, 5 ứng viên kèm thanh điểm khớp, lịch hội đồng. Cập nhật ngay sau mỗi lần Agent đặt lịch |
+| **Giữa** | 3 tab chế độ — 💬 Cấp 2 Chatbot · 🧠 Cấp 3 ReAct Agent · 🚀 Cấp 4 Autonomous |
+| **Chip câu hỏi** | 5 test case + **6 đòn tấn công Cross-Audit** bấm là chạy ngay |
+| **Trace panel** | Vẽ tuần tự `Thought → Action → Observation`, tô màu riêng cho hành động GHI, chốt xác nhận G4 và Guardrail |
+| **Cột phải** | 9 Guardrail đang bật và 5 tool kèm nhãn READ / WRITE |
+
+Thanh chỉ số dưới ô nhập hiển thị `số bước · số lần gọi tool · guardrail có ngắt không · có ghi dữ liệu không · thời gian` — đúng những con số dùng để chấm rubric.
+
+> 💡 **Kịch bản demo ấn tượng nhất**: hỏi *"Có những ứng viên nào đang ứng tuyển vị trí JD-001?"* ở **Cấp 2** (chatbot nói không biết) rồi bấm sang **Cấp 3** (Agent gọi tool, trả về đúng 4 ứng viên có thật). Sau đó bấm chip **⚖️ Phân biệt** để xem Guardrail G8 từ chối với `tool_calls = 0`.
+
+---
+
 > 🚀 **BẮT ĐẦU LÀM BÀI**:
 > Vui lòng mở sổ tay thực hành 👉 **[PHAN_CONG_CONG_VIEC.md](file:///c:/Users/Admin/Documents/VinUni/LabCoachVin/LabKeyCoach/Day-3-Lab-Chatbot-vs-react-agent-E402/docs/PHAN_CONG_CONG_VIEC.md)** để xem phân vai và checklist công việc cụ thể cho từng thành viên!
