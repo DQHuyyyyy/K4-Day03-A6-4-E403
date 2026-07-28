@@ -13,13 +13,30 @@
 
 | # | Tên tool | Tham số | Trả về | Side effect |
 | :-: | :--- | :--- | :--- | :--- |
-| 1 | `search_candidates` | `job_id: str` | Danh sách ứng viên đang ứng tuyển vị trí đó | 🟢 READ-ONLY |
+| 1 | `search_candidates` | `job_id: str` | Danh sách ứng viên **kèm điểm khớp**: `CAND-001 - Nguyễn Văn An (88/100); ...` | 🟢 READ-ONLY |
 | 2 | `get_candidate_profile` | `candidate_id: str` | Chi tiết CV: kinh nghiệm, kỹ năng, học vấn | 🟢 READ-ONLY |
 | 3 | `score_candidate` | `candidate_id: str`, `job_id: str` | Điểm khớp 0–100 kèm kỹ năng đạt/thiếu | 🟢 READ-ONLY |
 | 4 | `check_interview_slots` | `date: str` (`YYYY-MM-DD`) | Các khung giờ trống của hội đồng phỏng vấn | 🟢 READ-ONLY |
 | 5 | `book_interview` | `candidate_id: str`, `slot: str` | Xác nhận đặt lịch thành công / lỗi | 🔴 **WRITE — không đảo ngược được** |
 
 Cả 5 tool phải được đăng ký trong `AVAILABLE_TOOLS` của `src/tools.py`.
+
+### ⚙️ Hàm phụ trợ (KHÔNG đăng ký vào `AVAILABLE_TOOLS`)
+
+`reset_state()` — khôi phục `INTERVIEW_SLOTS` và `BOOKED_INTERVIEWS` về trạng thái gốc. `src/app.py` gọi trước mỗi test case. Đây **không phải tool cho Agent gọi**, không được liệt kê trong `REACT_SYSTEM_PROMPT`.
+
+### 🔢 Ngân sách vòng lặp — `MAX_ITERATIONS`
+
+`search_candidates` trả kèm điểm khớp nên Agent **không cần** gọi `score_candidate` lặp lại cho từng ứng viên. Luồng dài nhất (test case #4) chỉ còn 4 bước:
+
+```
+1. search_candidates[JD-001]            → có sẵn điểm của cả 4 ứng viên
+2. check_interview_slots[2026-07-29]
+3. book_interview[CAND-001, 2026-07-29 09:00]
+4. Final Answer
+```
+
+➔ **Role 3 (Đạt) đặt `MAX_ITERATIONS = 6`** ở Mốc 3 (hiện đang là `3` — sẽ ngắt giữa chừng). Để `6` là có dư 2 bước cho trường hợp Agent cần gọi thêm `get_candidate_profile` hoặc phải thử lại sau khi tool báo lỗi.
 
 ---
 
