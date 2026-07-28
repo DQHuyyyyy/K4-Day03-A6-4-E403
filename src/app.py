@@ -5,6 +5,7 @@ File chính ghép nối tất cả các thành phần: Tools + Prompts + Test Ca
 
 import json
 import os
+import re
 import sys
 from dotenv import load_dotenv
 
@@ -107,17 +108,249 @@ def export_baseline_markdown(results):
         print("* **Nhận xét**: ________\n")
 
 
-def run_react_agent(user_query: str, provider):
-    """
-    Vòng lặp ReAct Agent (Thought -> Action -> Observation) có Guardrails.
+# =====================================================================
+# 🧠 MỐC 3 — REACT AGENT LOOP (PARSER ➔ EXECUTOR ➔ LOOP ➔ GUARDRAILS)
+# =====================================================================
+# 4 nguyên tắc bất biến (CODELAB mục 4):
+#   1. Không lặp vô hạn        ➔ phanh MAX_ITERATIONS
+#   2. Mỗi Action ➔ đúng 1 Observation do APP chèn, LLM không được tự bịa
+#   3. Observation quay lại prompt làm ngữ cảnh cho Thought kế tiếp
+#   4. Không khẳng định khi thiếu bằng chứng ➔ phải có Observation mới Final Answer
+# =====================================================================
 
-    🚧 CHƯA TRIỂN KHAI — thuộc phạm vi MỐC 3.
-    Cố ý để trống thay vì in kịch bản dựng sẵn: CODELAB liệt kê "để model tự bịa
-    Observation thay vì application chèn kết quả tool thực tế" vào danh sách lỗi bị trừ điểm.
+# Action: tên_tool[tham_số_1, tham_số_2]
+ACTION_PATTERN = re.compile(r"Action\s*:\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[(.*?)\]", re.DOTALL)
+FINAL_PATTERN = re.compile(r"Final\s+Answer\s*:\s*(.+)", re.DOTALL)
+THOUGHT_PATTERN = re.compile(
+    r"Thought\s*:\s*(.+?)(?=\n\s*(?:Action|Final\s+Answer)\s*:|$)", re.DOTALL
+)
+
+
+def strip_fake_observation(raw: str) -> str:
     """
+    Cắt bỏ mọi thứ từ chỗ LLM tự sinh dòng 'Observation:' trở đi.
+
+    Nguyên tắc bất biến số 2: Observation là kết quả THẬT do application chèn vào
+    sau khi thực thi tool. Nếu để LLM tự bịa Observation thì toàn bộ grounding sụp đổ
+    — đây là lỗi CODELAB liệt kê trong danh sách commonErrors.
+    """
+    match = re.search(r"\n\s*Observation\s*:", raw)
+    return raw[:match.start()] if match else raw
+
+
+def parse_llm_output(raw: str) -> dict:
+    """Tách Thought / Action / Final Answer từ output thô của LLM."""
+    text = strip_fake_observation(raw)
+
+    thought_match = THOUGHT_PATTERN.search(text)
+    action_match = ACTION_PATTERN.search(text)
+    final_match = FINAL_PATTERN.search(text)
+
+    # Nếu có cả Action lẫn Final Answer, cái nào xuất hiện TRƯỚC thì thắng
+    is_final = final_match is not None and (
+        action_match is None or final_match.start() < action_match.start()
+    )
+
+    args = []
+    if action_match and not is_final:
+        raw_args = action_match.group(2).strip()
+        if raw_args:
+            # Bỏ nháy đơn/nháy kép/backtick mà LLM hay bọc quanh tham số
+            args = [a.strip().strip("'\"`") for a in raw_args.split(",")]
+
+    return {
+        "thought": thought_match.group(1).strip() if thought_match else "",
+        "tool_name": action_match.group(1) if (action_match and not is_final) else None,
+        "args": args,
+        "final_answer": final_match.group(1).strip() if is_final else None,
+        "clean_text": text.strip(),
+    }
+
+
+def execute_tool(tool_name: str, args: list) -> str:
+    """
+    Thực thi tool và trả về Observation THẬT.
+
+    Mọi nhánh hỏng đều trả chuỗi 'LỖI: ...' để Agent đọc và tự phục hồi (Agent V2),
+    thay vì để exception làm chết cả vòng lặp.
+    """
+    tool_fn = AVAILABLE_TOOLS.get(tool_name)
+
+    # Recovery 1 — Unknown Tool: nói rõ tool nào hợp lệ để Agent chọn lại
+    if tool_fn is None:
+        return (
+            f"LỖI: Tool '{tool_name}' không tồn tại. "
+            f"Các tool hợp lệ gồm: {', '.join(AVAILABLE_TOOLS.keys())}."
+        )
+
+    # Recovery 2 — Malformed Args: gợi ý lại đúng cú pháp thay vì crash
+    try:
+        return tool_fn(*args)
+    except TypeError as exc:
+        return (
+            f"LỖI: Sai số lượng tham số khi gọi '{tool_name}' "
+            f"(nhận {len(args)} tham số). Chi tiết: {exc}"
+        )
+    except Exception as exc:  # lưới an toàn cuối cùng, không để vòng lặp chết
+        return f"LỖI: Tool '{tool_name}' gặp sự cố ngoài dự kiến: {exc}"
+
+
+def run_react_agent(user_query: str, provider) -> dict:
+    """
+    Vòng lặp ReAct Agent: Thought -> Action -> Observation, có Guardrails.
+
+    Trả về dict gồm trace log đầy đủ để Role 5 dán vào docs/trace_eval.md.
+    """
+    reset_state()   # mỗi câu hỏi xuất phát từ cùng một trạng thái lịch phỏng vấn
+
     print(f"\n🤖 [REACT AGENT] Câu hỏi: {user_query}")
-    print(f"🚧 Vòng lặp ReAct sẽ được lắp ở Mốc 3 "
-          f"({len(AVAILABLE_TOOLS)} tool đã đăng ký, MAX_ITERATIONS = {MAX_ITERATIONS}).")
+
+    history = []          # chuỗi Thought/Action/Observation nối lại làm ngữ cảnh
+    trace = []            # bản ghi từng bước cho báo cáo
+    seen_actions = set()  # phát hiện Agent gọi lặp lại y hệt một Action
+    tool_calls = 0
+    final_answer = None
+    stopped_by_guardrail = False
+
+    for step in range(1, MAX_ITERATIONS + 1):
+        print(f"\n--- 🔄 Vòng lặp ReAct (Step {step}/{MAX_ITERATIONS}) ---")
+
+        # Nguyên tắc 3: toàn bộ Observation trước đó quay lại prompt
+        prompt = f"Question: {user_query}\n"
+        if history:
+            prompt += "\n".join(history) + "\n"
+
+        raw = provider.generate(prompt, system_prompt=REACT_SYSTEM_PROMPT)
+        parsed = parse_llm_output(raw)
+
+        if parsed["thought"]:
+            print(f"🧠 Thought: {parsed['thought']}")
+
+        # --- Nhánh 1: Agent chốt câu trả lời cuối cùng ---
+        if parsed["final_answer"] is not None:
+            final_answer = parsed["final_answer"]
+            print(f"🏁 Final Answer: {final_answer}")
+            trace.append({
+                "step": step,
+                "thought": parsed["thought"],
+                "action": None,
+                "observation": None,
+                "final_answer": final_answer,
+            })
+            break
+
+        # --- Nhánh 2: Agent gọi tool ---
+        if parsed["tool_name"] is None:
+            # Recovery 3 — Parse Error: dạy lại cú pháp đúng cho bước sau
+            action_label = None
+            observation = (
+                "LỖI: Không đọc được Action. Hãy dùng đúng định dạng: "
+                "Action: tên_tool[tham_số_1, tham_số_2]"
+            )
+            print(f"⚠️ Không parse được Action từ output của LLM.")
+        else:
+            action_label = f"{parsed['tool_name']}[{', '.join(parsed['args'])}]"
+            print(f"🛠️ Action: {action_label}")
+
+            signature = (parsed["tool_name"], tuple(parsed["args"]))
+            if signature in seen_actions:
+                # Recovery 4 — Repeated Action: Agent không tự biết mình đang kẹt lặp
+                observation = (
+                    f"LỖI: Bạn đã gọi '{action_label}' ở bước trước và đã nhận kết quả. "
+                    "Đừng lặp lại, hãy dùng tool khác hoặc trả Final Answer."
+                )
+                print("🔁 Phát hiện Action lặp lại — chèn cảnh báo thay vì gọi tool.")
+            else:
+                seen_actions.add(signature)
+
+                # Cảnh báo rõ với hành động GHI không đảo ngược được
+                if parsed["tool_name"] == "book_interview":
+                    print(f"🔐 [HÀNH ĐỘNG GHI] {action_label} — không đảo ngược được.")
+
+                observation = execute_tool(parsed["tool_name"], parsed["args"])
+                tool_calls += 1
+
+        print(f"👁️ Observation: {observation}")
+
+        # Nguyên tắc 2: chính application chèn Observation vào lịch sử
+        history.append(f"Thought: {parsed['thought']}")
+        if action_label:
+            history.append(f"Action: {action_label}")
+        history.append(f"Observation: {observation}")
+
+        trace.append({
+            "step": step,
+            "thought": parsed["thought"],
+            "action": action_label,
+            "observation": observation,
+            "final_answer": None,
+        })
+
+    # --- Guardrail: hết ngân sách vòng lặp mà chưa có Final Answer ---
+    if final_answer is None:
+        stopped_by_guardrail = True
+        final_answer = (
+            f"Xin lỗi, tôi đã thử {MAX_ITERATIONS} bước nhưng chưa hoàn tất được yêu cầu này. "
+            "Tôi dừng lại để tránh lặp vô hạn và KHÔNG thực hiện thao tác nào chưa chắc chắn. "
+            "Bạn vui lòng kiểm tra lại mã ứng viên/khung giờ, hoặc thử một ngày khác."
+        )
+        print(f"\n🛡️ GUARDRAIL TRIGGERED: Đã đạt giới hạn {MAX_ITERATIONS} bước. Ngắt lặp an toàn!")
+        print(f"🏁 Safe Fallback: {final_answer}")
+
+    return {
+        "final_answer": final_answer,
+        "trace": trace,
+        "tool_calls": tool_calls,
+        "steps": len(trace),
+        "stopped_by_guardrail": stopped_by_guardrail,
+    }
+
+
+def run_react_suite(tests, provider):
+    """Chạy ReAct Agent trên toàn bộ test cases và thu trace log cho Role 5."""
+    results = []
+
+    for tc in tests:
+        print(f"\n{'=' * 60}")
+        print(f"🧠 [REACT AGENT] Case #{tc['id']} — {tc['category']}")
+        print(f"🎯 Kỳ vọng : {tc['expected_behavior'][:120]}...")
+        print("-" * 60)
+
+        outcome = run_react_agent(tc["question"], provider)
+        outcome.update({
+            "id": tc["id"],
+            "category": tc["category"],
+            "question": tc["question"],
+        })
+        results.append(outcome)
+
+    return results
+
+
+def export_react_markdown(results):
+    """In khối Markdown trace log để Role 5 dán vào docs/trace_eval.md (mục 3)."""
+    print(f"\n\n{'=' * 60}")
+    print("📋 KHỐI MARKDOWN — TRACE LOG REACT AGENT")
+    print(f"{'=' * 60}\n")
+
+    for r in results:
+        print(f"### Case #{r['id']} — {r['category']}")
+        print(f"**Câu hỏi**: *\"{r['question']}\"*\n")
+        print("```text")
+        for entry in r["trace"]:
+            if entry["thought"]:
+                print(f"Thought {entry['step']}: {entry['thought']}")
+            if entry["action"]:
+                print(f"Action {entry['step']}: {entry['action']}")
+            if entry["observation"]:
+                print(f"Observation {entry['step']}: {entry['observation']}")
+            print()
+        print(f"Final Answer: {r['final_answer']}")
+        print("```\n")
+        print(f"* **Số bước**: `{r['steps']}/{MAX_ITERATIONS}` · "
+              f"**Số lần gọi tool**: `{r['tool_calls']}` · "
+              f"**Guardrail ngắt**: `{'CÓ' if r['stopped_by_guardrail'] else 'KHÔNG'}`")
+        print("* **Nhận xét**: ________\n")
 
 
 if __name__ == "__main__":
@@ -134,7 +367,29 @@ if __name__ == "__main__":
     print(f"✅ Đã tải thành công {len(tests)} Test Cases từ config/test_cases.json")
     print(f"🛠️ Tool đã đăng ký trong AVAILABLE_TOOLS: {list(AVAILABLE_TOOLS.keys())}")
 
+    # Cảnh báo cấu hình Guardrail: luồng dài nhất (case #4) cần 4 bước
+    if MAX_ITERATIONS < 4:
+        print(f"⚠️ CẢNH BÁO: MAX_ITERATIONS = {MAX_ITERATIONS} là quá thấp. "
+              f"Case multi-step cần tối thiểu 4 bước ➔ Role 3 đặt lại thành 6 "
+              f"(xem docs/INTERFACE_CONTRACT.md).")
+
     # --- MỐC 2: Chạy Chatbot Baseline trên toàn bộ bộ đề ---
     print("\n--- DEMO 1: CHATBOT BASELINE (1 LLM call mỗi câu, 0 lần gọi tool) ---")
-    results = run_baseline_suite(tests, provider)
-    export_baseline_markdown(results)
+    baseline_results = run_baseline_suite(tests, provider)
+
+    # --- MỐC 3: Chạy ReAct Agent trên cùng bộ đề để so sánh công bằng ---
+    print(f"\n\n--- DEMO 2: REACT AGENT (Thought -> Action -> Observation) ---")
+    react_results = run_react_suite(tests, provider)
+
+    export_baseline_markdown(baseline_results)
+    export_react_markdown(react_results)
+
+    # --- Bảng so sánh nhanh Chatbot vs Agent ---
+    print(f"\n{'=' * 60}")
+    print("📊 SO SÁNH NHANH: BASELINE vs REACT AGENT")
+    print(f"{'=' * 60}")
+    print(f"{'Case':<6}{'Baseline tool_calls':<22}{'Agent tool_calls':<20}{'Agent steps':<14}{'Guardrail'}")
+    for base, react in zip(baseline_results, react_results):
+        print(f"#{base['id']:<5}{base['tool_calls']:<22}{react['tool_calls']:<20}"
+              f"{str(react['steps']) + '/' + str(MAX_ITERATIONS):<14}"
+              f"{'CÓ' if react['stopped_by_guardrail'] else '-'}")
