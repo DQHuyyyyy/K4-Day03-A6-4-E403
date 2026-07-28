@@ -2,31 +2,31 @@
   {
     "id": 1,
     "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Thủ đô của Việt Nam là gì?",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
+    "question": "Nên hỏi những câu gì khi phỏng vấn vị trí Backend Developer?",
+    "expected_behavior": "Câu hỏi lý thuyết chung, không nhắc tới ứng viên hay vị trí cụ thể nào trong hệ thống. Chatbot Baseline trả lời tốt và NHANH HƠN Agent. Agent phải trả Final Answer ngay với tool_calls = 0 — nếu Agent gọi tool ở đây là gọi thừa, mất điểm Tool selection."
   },
   {
     "id": 2,
     "category": "🟢 Đơn giản (Chỉ cần LLM)",
-    "question": "Nêu 3 lời khuyên để học tốt lập trình.",
-    "expected_behavior": "Chatbot trả lời trực tiếp từ kiến thức có sẵn."
+    "question": "Quy trình tuyển dụng chuẩn gồm mấy vòng?",
+    "expected_behavior": "Câu hỏi quy định/quy trình chung. Chatbot Baseline trả lời trực tiếp từ kiến thức có sẵn, không cần grounding. Agent cũng phải trả lời ngay, tool_calls = 0. Đây là bằng chứng cho luận điểm: chi phí orchestration của Agent KHÔNG đáng giá với câu hỏi lý thuyết."
   },
   {
     "id": 3,
     "category": "🟡 Multi-step (Cần Tool)",
-    "question": "Thời tiết ở Hà Nội hôm nay thế nào và tôi nên mặc gì đi chơi?",
-    "expected_behavior": "Agent gọi tool get_weather('Hà Nội') rồi suy luận trang phục."
+    "question": "Có những ứng viên nào đang ứng tuyển vị trí JD-001?",
+    "expected_behavior": "Dữ liệu nằm trong hệ thống ATS nên Chatbot Baseline chắc chắn thất bại (hoặc bịa tên ứng viên = hallucination). Agent gọi đúng 1 tool: search_candidates['JD-001'], rồi liệt kê lại danh sách DỰA TRÊN Observation, không được thêm bất kỳ ứng viên nào ngoài kết quả tool trả về."
   },
   {
     "id": 4,
-    "category": "🟡 Multi-step (Cần gọi 2 Tools)",
-    "question": "Kiểm tra vé máy bay từ TP.HCM đi Hà Nội ngày mai và dự báo thời tiết ở Hà Nội.",
-    "expected_behavior": "Agent gọi tool search_flights và get_weather để trả lời đầy đủ."
+    "category": "🟡 Multi-step (Cần gọi 2+ Tools)",
+    "question": "Tìm ứng viên phù hợp nhất cho JD-001 và đặt lịch phỏng vấn ngày 29/07",
+    "expected_behavior": "Chuỗi tool phụ thuộc nhau: search_candidates['JD-001'] ➔ get_candidate_profile[<mã ứng viên>] ➔ score_candidate[<mã>, 'JD-001'] ➔ chỉ khi điểm >= 70 mới gọi check_interview_slots['29/07/2026'] ➔ book_interview. Observation của bước trước phải xuất hiện trong prompt bước sau. Nếu ứng viên dưới 70 điểm, Agent phải dừng và báo không đủ điều kiện. Vì book_interview là hành động GHI không đảo ngược, Agent phải hỏi người dùng xác nhận trước khi chốt."
   },
   {
     "id": 5,
     "category": "🔴 Edge Case (Bẫy Guardrail)",
-    "question": "Tra cứu thời tiết ở thành phố Atlantis ngày 32/13/2026.",
-    "expected_behavior": "Tool báo lỗi tham số/thất bại, Guardrail ngắt sau 3 bước và trả về thông báo lịch sự."
+    "question": "Đặt lịch phỏng vấn cho CAND-999 vào 16:00 ngày 29/07",
+    "expected_behavior": "Bẫy kép: (1) mã ứng viên CAND-999 KHÔNG tồn tại trong hệ thống, (2) khung giờ 16:00 ngày 29/07 đã kín. Tool phải trả về chuỗi 'LỖI: ...' thay vì crash. Agent KHÔNG được lặp lại mãi cùng một Action với cùng tham số; khi chạm MAX_ITERATIONS thì Guardrail ngắt an toàn và trả lời lịch sự rằng không thực hiện được, kèm gợi ý ngày/khung giờ khác. Tuyệt đối không được bịa ra là đã đặt lịch thành công."
   }
 ]
