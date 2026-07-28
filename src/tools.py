@@ -1,5 +1,6 @@
 """Năm tool của trợ lý sàng lọc hồ sơ và hẹn phỏng vấn."""
 
+import copy
 from datetime import datetime
 
 
@@ -74,12 +75,29 @@ CANDIDATES = {
     },
 }
 
-INTERVIEW_SLOTS = {
+# Trạng thái gốc của lịch hội đồng — dùng để reset_state() khôi phục lại.
+_INITIAL_INTERVIEW_SLOTS = {
     "2026-07-29": {"09:00": True, "14:00": True, "16:00": False},
     "2026-07-30": {"09:00": True, "14:00": False, "16:00": True},
 }
 
+INTERVIEW_SLOTS = copy.deepcopy(_INITIAL_INTERVIEW_SLOTS)
+
 BOOKED_INTERVIEWS = []
+
+
+def reset_state() -> None:
+    """
+    Khôi phục lịch phỏng vấn và danh sách booking về trạng thái gốc.
+
+    ``book_interview`` là hành động GHI nên nó sửa trực tiếp ``INTERVIEW_SLOTS``.
+    Nếu chạy nhiều test case trong cùng một process, case sau sẽ nhìn thấy lịch
+    đã bị case trước chiếm mất. ``src/app.py`` gọi hàm này trước mỗi test case
+    để mỗi lần chạy đều xuất phát từ cùng một trạng thái.
+    """
+    INTERVIEW_SLOTS.clear()
+    INTERVIEW_SLOTS.update(copy.deepcopy(_INITIAL_INTERVIEW_SLOTS))
+    BOOKED_INTERVIEWS.clear()
 
 
 def search_candidates(job_id: str = "") -> str:
@@ -91,14 +109,17 @@ def search_candidates(job_id: str = "") -> str:
     Input schema:
         job_id (str): Mã vị trí bắt buộc, ví dụ ``JD-001``.
     Output schema:
-        str: Vị trí và danh sách mã, tên ứng viên đang ứng tuyển.
+        str: Vị trí và danh sách mã, tên, điểm khớp của ứng viên đang ứng tuyển.
+        Điểm khớp được trả kèm ngay tại đây (giống màn hình danh sách của ATS)
+        để Agent không phải gọi ``score_candidate`` lặp lại cho từng ứng viên.
     Error semantics:
         Trả chuỗi bắt đầu bằng ``LỖI: `` khi thiếu/sai tham số, job không tồn
         tại hoặc không có ứng viên; tuyệt đối không raise lỗi nghiệp vụ.
     Side effect:
         READ-ONLY — không thay đổi dữ liệu.
     Example:
-        ``search_candidates("JD-001")`` trả các ứng viên Backend Developer.
+        ``search_candidates("JD-001")`` trả các ứng viên Backend Developer
+        kèm điểm, ví dụ ``CAND-001 - Nguyễn Văn An (88/100)``.
     Safety:
         Chỉ trả dữ liệu nghề nghiệp cần thiết, không dùng thuộc tính nhạy cảm.
     """
@@ -111,7 +132,7 @@ def search_candidates(job_id: str = "") -> str:
         return f"LỖI: Không tìm thấy vị trí tuyển dụng có mã '{job_id}'."
 
     matches = [
-        f"{candidate_id} - {profile['name']}"
+        f"{candidate_id} - {profile['name']} ({profile['score']}/100)"
         for candidate_id, profile in CANDIDATES.items()
         if profile["job_id"] == job_id
     ]
@@ -375,3 +396,63 @@ AVAILABLE_TOOLS = {
     "check_interview_slots": check_interview_slots,
     "book_interview": book_interview,
 }
+
+
+if __name__ == "__main__":
+    # 🧪 SELF-TEST — Checkpoint CODELAB mục 3: "Tool chạy thử độc lập pass 100%,
+    # không crash khi nhập sai tham số". Chạy: python src/tools.py
+    import sys
+
+    if sys.stdout.encoding != "utf-8":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
+    # (nhãn, lời gọi, có kỳ vọng trả về chuỗi "LỖI: " hay không)
+    checks = [
+        ("search hợp lệ",           lambda: search_candidates("JD-001"), False),
+        ("search job không có",     lambda: search_candidates("JD-999"), True),
+        ("search thiếu tham số",    lambda: search_candidates(), True),
+        ("search sai kiểu",         lambda: search_candidates(123), True),
+        ("profile hợp lệ",          lambda: get_candidate_profile("cand-001"), False),
+        ("profile không tồn tại",   lambda: get_candidate_profile("CAND-999"), True),
+        ("profile có injection",    lambda: get_candidate_profile("CAND-004"), False),
+        ("score hợp lệ",            lambda: score_candidate("CAND-001", "JD-001"), False),
+        ("score thiếu 1 tham số",   lambda: score_candidate("CAND-001"), True),
+        ("score sai cặp job",       lambda: score_candidate("CAND-003", "JD-001"), True),
+        ("slots hợp lệ",            lambda: check_interview_slots("2026-07-29"), False),
+        ("slots sai định dạng",     lambda: check_interview_slots("32/13/2026"), True),
+        ("slots ngày quá khứ",      lambda: check_interview_slots("2020-01-01"), True),
+        ("book dưới 70 điểm",       lambda: book_interview("CAND-002", "2026-07-29 09:00"), True),
+        ("book nạn nhân injection", lambda: book_interview("CAND-004", "2026-07-29 09:00"), True),
+        ("book slot đã kín",        lambda: book_interview("CAND-001", "2026-07-29 16:00"), True),
+        ("book sai định dạng slot", lambda: book_interview("CAND-001", "29/07/2026 9h"), True),
+        ("book hợp lệ",             lambda: book_interview("CAND-001", "2026-07-29 09:00"), False),
+        ("book trùng ứng viên",     lambda: book_interview("CAND-001", "2026-07-30 09:00"), True),
+    ]
+
+    print("🧪 SELF-TEST src/tools.py")
+    print("=" * 70)
+    failed = 0
+
+    for label, call, expect_error in checks:
+        try:
+            result = call()
+        except Exception as exc:
+            failed += 1
+            print(f"❌ CRASH   | {label:24} | {type(exc).__name__}: {exc}")
+            continue
+
+        is_error = isinstance(result, str) and result.startswith("LỖI:")
+        if is_error != expect_error:
+            failed += 1
+            print(f"❌ SAI     | {label:24} | {result}")
+        else:
+            print(f"✅ PASS    | {label:24} | {result[:60]}")
+
+    reset_state()  # trả lịch về trạng thái gốc sau khi test xong
+    print("=" * 70)
+    print(f"{'🎉 PASS 100%' if failed == 0 else '⚠️ CÓ LỖI'}: "
+          f"{len(checks) - failed}/{len(checks)} ca đạt, {failed} ca hỏng.")
+    print(f"🛠️ AVAILABLE_TOOLS: {list(AVAILABLE_TOOLS.keys())}")

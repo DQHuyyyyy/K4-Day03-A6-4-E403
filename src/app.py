@@ -21,7 +21,7 @@ if sys.stdout.encoding != 'utf-8':
 # Import các thành phần từ file của Role 2, Role 3 & Multi-Provider Adapter
 # Chỉ import AVAILABLE_TOOLS: app.py tra tool qua registry, không phụ thuộc tên hàm cụ thể
 # ➔ Duy thêm/đổi tool trong tools.py cũng không làm app.py gãy import nữa.
-from tools import AVAILABLE_TOOLS
+from tools import AVAILABLE_TOOLS, reset_state
 from prompts import CHATBOT_BASELINE_PROMPT, REACT_SYSTEM_PROMPT, MAX_ITERATIONS
 from providers import get_llm_provider
 
@@ -57,6 +57,11 @@ def run_baseline_suite(tests, provider):
     results = []
 
     for tc in tests:
+        # Mỗi case xuất phát từ cùng một trạng thái lịch phỏng vấn:
+        # book_interview là hành động GHI, nếu không reset thì case sau sẽ thấy
+        # lịch đã bị case trước chiếm mất.
+        reset_state()
+
         print(f"\n{'=' * 60}")
         print(f"💬 [BASELINE] Case #{tc['id']} — {tc['category']}")
         print(f"❓ Câu hỏi : {tc['question']}")
